@@ -2,8 +2,6 @@
 
 Hit and Blow（別名：Mastermind、数当てゲーム）を解くための様々なAIアルゴリズム実装です。ルールベースから強化学習まで、異なるアプローチでゲームを解く方法を比較・検証しています。
 
-![Hit and Blow Game](https://github.com/yourusername/hit_and_blow/raw/main/docs/images/game_example.png)
-
 ## 🎮 ゲームの概要
 
 **Hit and Blow**は、プレイヤーが相手の秘密の数列を当てるゲームです：
@@ -56,10 +54,6 @@ hit_and_blow/
 - Poetry（依存関係管理用）
 
 ```bash
-# リポジトリをクローン
-git clone https://github.com/yourusername/hit_and_blow.git
-cd hit_and_blow
-
 # Poetry を使ったインストール（推奨）
 poetry install
 
@@ -173,29 +167,12 @@ poetry run python tests/test_agent_environment.py
 
 多腕バンディットアルゴリズムとQ学習を組み合わせたハイブリッドアプローチです。初期段階では情報収集を最大化し、後期段階では最適解に向かいます。
 
-## 🛠️ 開発環境のセットアップ
-
-開発に参加する場合は、以下の手順で環境をセットアップしてください：
-
-```bash
-# 開発用依存関係をインストール
-poetry install --with dev
-
-# 事前コミットフックを設定（オプション）
-pre-commit install
-```
-
-## 🤝 貢献方法
-
-1. このリポジトリをフォークします
-2. 新しいブランチを作成します (`git checkout -b feature/amazing-feature`)
-3. 変更をコミットします (`git commit -m 'Add some amazing feature'`)
-4. ブランチにプッシュします (`git push origin feature/amazing-feature`)
-5. プルリクエストを作成します
 
 ## 🔗 関連リソース
 
 - [アルゴリズム解説](./docs/algorithms.md)
 - [発展例](./docs/advanced_usage.md)
 
+## 📄 ライセンス
 
+MITライセンスのもとで公開しています。詳細は[LICENSE](./LICENSE)ファイルをご覧ください。
