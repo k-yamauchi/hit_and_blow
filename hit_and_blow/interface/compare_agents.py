@@ -1,5 +1,6 @@
 import argparse
 import time
+import os
 from collections import defaultdict
 import matplotlib.pyplot as plt
 import numpy as np
@@ -24,6 +25,15 @@ def run_simulation(agent_name: str, num_games: int, num_digits: int, digit_range
     
     start_time = time.time()
     
+    # 強化学習エージェント用のモデルパスを設定
+    model_path = None
+    if agent_name in ["hybrid_q_learning", "q_learning", "sarsa", "hybrid_sarsa", "bandit", "hybrid_bandit"]:
+        # デフォルトのモデルパス
+        model_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "models")
+        model_path = os.path.join(model_dir, f"q_learning_model.pkl")
+        if not os.path.exists(model_path):
+            print(f"警告: モデルファイル {model_path} が見つかりません。新しいモデルで開始します。")
+    
     # 指定回数ゲームを実行
     for game_idx in range(num_games):
         # 環境のセットアップ
@@ -31,7 +41,17 @@ def run_simulation(agent_name: str, num_games: int, num_digits: int, digit_range
         obs = env.reset()
         
         # エージェントのセットアップ
-        agent = agent_class(num_digits=num_digits, digit_range=digit_range)
+        if agent_name in ["hybrid_q_learning", "q_learning", "sarsa", "hybrid_sarsa", "bandit", "hybrid_bandit"]:
+            # 強化学習エージェントの場合はモデルパスを渡す
+            agent = agent_class(
+                num_digits=num_digits, 
+                digit_range=digit_range,
+                model_path=model_path,
+                exploration_rate=0.05  # テスト時は探索率を下げる
+            )
+        else:
+            agent = agent_class(num_digits=num_digits, digit_range=digit_range)
+        
         agent.reset()
         
         done = False
@@ -86,7 +106,7 @@ def plot_results(results: Dict[str, Dict[str, Any]], num_digits: int, digit_rang
         print("警告: japanize-matplotlibがインストールされていないため、日本語が正しく表示されない可能性があります")
         print("日本語表示するには: pip install japanize-matplotlib")
     
-    # プロット数の設定
+    # 1. メイングラフ - 比較グラフ
     fig, axs = plt.subplots(2, 2, figsize=(15, 10))
     fig.suptitle(f'エージェント比較 ({num_digits}桁, 範囲:0-{digit_range-1}, 最大{max_turns}ターン)', fontsize=16)
     
@@ -111,8 +131,10 @@ def plot_results(results: Dict[str, Dict[str, Any]], num_digits: int, digit_rang
     bins = list(range(1, max_observed_turns + 2))
     
     for i, agent in enumerate(agent_names):
+        # ヒストグラム表示を改善（透明度と縁取りを設定）
         axs[1, 0].hist(results[agent]["turn_history"], bins=bins, alpha=0.5,
-                   label=agent, color=colors[i % len(colors)])
+                   label=agent, color=colors[i % len(colors)], 
+                   edgecolor='black', linewidth=1.2)
     
     axs[1, 0].set_title('ターン数の分布')
     axs[1, 0].set_xlabel('ターン数')
@@ -131,6 +153,39 @@ def plot_results(results: Dict[str, Dict[str, Any]], num_digits: int, digit_rang
     # グラフを保存
     plt.savefig('agent_comparison.png')
     print(f"比較グラフを 'agent_comparison.png' に保存しました")
+    
+    # 2. 追加グラフ - ターン数分布の詳細
+    if len(agent_names) > 1:
+        # 複数エージェントの場合、別のグラフとして保存
+        plt.figure(figsize=(12, 8))
+        plt.title(f'ターン数分布の詳細比較 ({num_digits}桁, 範囲:0-{digit_range-1})', fontsize=14)
+        
+        # エージェントごとに別々の列でプロット
+        bar_width = 0.8 / len(agent_names)
+        turns_range = range(1, max_observed_turns + 1)
+        
+        for i, agent in enumerate(agent_names):
+            # 各ターン数のカウント
+            turn_counts = [0] * max_observed_turns
+            for turn in results[agent]["turn_history"]:
+                if turn <= max_observed_turns:
+                    turn_counts[turn-1] += 1
+            
+            # 位置をずらしてプロット
+            positions = [x + (i - len(agent_names)/2 + 0.5) * bar_width for x in turns_range]
+            plt.bar(positions, turn_counts, width=bar_width, 
+                    label=agent, color=colors[i % len(colors)], alpha=0.7,
+                    edgecolor='black', linewidth=1)
+        
+        plt.xlabel('ターン数')
+        plt.ylabel('ゲーム数')
+        plt.xticks(list(turns_range))
+        plt.legend()
+        plt.grid(axis='y', linestyle='--', alpha=0.7)
+        
+        # グラフを保存
+        plt.savefig('turns_distribution.png')
+        print(f"ターン数分布グラフを 'turns_distribution.png' に保存しました")
     
     # グラフを表示
     plt.show()

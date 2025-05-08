@@ -7,221 +7,355 @@ import pickle
 import argparse
 import numpy as np
 from collections import defaultdict
+import pprint
 
 # プロジェクトのルートディレクトリをパスに追加
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-def load_q_table(model_path):
-    """モデルファイルからQ値テーブルをロード"""
+def load_model(model_path):
+    """
+    Load the model file and return the whole model
+    """
+    if not os.path.exists(model_path):
+        print(f"モデルファイル {model_path} が見つかりません")
+        exit(1)
+    
     try:
         with open(model_path, 'rb') as f:
-            model_data = pickle.load(f)
-        
-        if 'q_table' in model_data:
-            q_table = model_data['q_table']
-            return q_table, model_data
-        else:
-            print(f"エラー: モデルにQ値テーブルが含まれていません: {model_path}")
-            return None, None
+            model = pickle.load(f)
+        return model
     except Exception as e:
-        print(f"モデル読み込みエラー: {e}")
-        return None, None
+        print(f"モデルの読み込み中にエラーが発生しました: {e}")
+        exit(1)
+
+def print_model_structure(model):
+    """
+    Print the structure of the model
+    """
+    print("\n===== モデル構造 =====")
+    
+    # モデルの型を表示
+    print(f"モデルのタイプ: {type(model)}")
+    
+    # クラスの場合、属性を表示
+    if hasattr(model, "__dict__"):
+        print("\nモデル属性:")
+        for attr_name in dir(model):
+            # 特殊メソッドと組み込みメソッドをスキップ
+            if attr_name.startswith('__') or callable(getattr(model, attr_name)):
+                continue
+            
+            attr_value = getattr(model, attr_name)
+            attr_type = type(attr_value).__name__
+            
+            # 値の概要を表示（長すぎる場合は省略）
+            value_summary = str(attr_value)
+            if len(value_summary) > 100:
+                value_summary = value_summary[:100] + "..."
+            
+            print(f"  {attr_name} ({attr_type}): {value_summary}")
+    
+    # 辞書の場合、キーを表示
+    elif isinstance(model, dict):
+        print("\nモデルキー:")
+        for key in model.keys():
+            value = model[key]
+            value_type = type(value).__name__
+            
+            # 値の概要を表示
+            value_summary = str(value)
+            if len(value_summary) > 100:
+                value_summary = value_summary[:100] + "..."
+            
+            print(f"  {key} ({value_type}): {value_summary}")
+    
+    else:
+        print(f"モデルデータ: {model}")
+
+def load_q_table(model):
+    """
+    Try to extract Q-table from the model
+    """
+    # クラスインスタンスの場合
+    if hasattr(model, "q_table") and model.q_table is not None:
+        return model.q_table
+    
+    # 辞書の場合
+    elif isinstance(model, dict) and "q_table" in model:
+        return model["q_table"]
+    
+    # HybridQLearningAgentの場合、q_dictの可能性
+    elif hasattr(model, "q_dict") and model.q_dict is not None:
+        return model.q_dict
+    
+    print("モデルからQ値テーブルを見つけられませんでした")
+    return None
 
 def print_q_table_stats(q_table):
-    """Q値テーブルの統計情報を表示"""
-    if not q_table:
-        print("Q値テーブルが空です")
-        return
-    
-    state_action_pairs = len(q_table)
-    unique_states = len(set([state for state, _ in q_table.keys()]))
-    
-    q_values = list(q_table.values())
-    max_q = max(q_values)
-    min_q = min(q_values)
-    avg_q = sum(q_values) / len(q_values)
-    
-    print(f"\n===== Q値テーブル統計 =====")
-    print(f"状態-行動ペア数: {state_action_pairs}")
-    print(f"ユニーク状態数: {unique_states}")
-    print(f"最大Q値: {max_q:.4f}")
-    print(f"最小Q値: {min_q:.4f}")
-    print(f"平均Q値: {avg_q:.4f}")
-    
-    # Q値の分布
-    q_ranges = {
-        "10.0以上": 0,
-        "5.0-10.0": 0,
-        "1.0-5.0": 0,
-        "0.5-1.0": 0,
-        "0.0-0.5": 0,
-        "-0.5-0.0": 0,
-        "-1.0--0.5": 0,
-        "-5.0--1.0": 0,
-        "-10.0--5.0": 0,
-        "-10.0未満": 0
-    }
-    
-    for q_value in q_values:
-        if q_value >= 10.0:
-            q_ranges["10.0以上"] += 1
-        elif q_value >= 5.0:
-            q_ranges["5.0-10.0"] += 1
-        elif q_value >= 1.0:
-            q_ranges["1.0-5.0"] += 1
-        elif q_value >= 0.5:
-            q_ranges["0.5-1.0"] += 1
-        elif q_value >= 0.0:
-            q_ranges["0.0-0.5"] += 1
-        elif q_value >= -0.5:
-            q_ranges["-0.5-0.0"] += 1
-        elif q_value >= -1.0:
-            q_ranges["-1.0--0.5"] += 1
-        elif q_value >= -5.0:
-            q_ranges["-5.0--1.0"] += 1
-        elif q_value >= -10.0:
-            q_ranges["-10.0--5.0"] += 1
-        else:
-            q_ranges["-10.0未満"] += 1
-    
-    print("\nQ値の分布:")
-    for range_name, count in q_ranges.items():
-        percentage = count / state_action_pairs * 100
-        print(f"  {range_name}: {count} ({percentage:.1f}%)")
-
-def print_top_actions_for_state(q_table, state_key, top_n=10):
-    """特定の状態に対するトップNのアクションを表示"""
-    actions = {}
-    
-    for (state, action), q_value in q_table.items():
-        if state == state_key:
-            actions[action] = q_value
-    
-    if not actions:
-        print(f"状態 '{state_key}' に対するアクションが見つかりません")
-        return
-    
-    # Q値で降順にソート
-    sorted_actions = sorted(actions.items(), key=lambda x: x[1], reverse=True)
-    
-    print(f"\n===== 状態 '{state_key}' のトップ{min(top_n, len(sorted_actions))}アクション =====")
-    for i, (action, q_value) in enumerate(sorted_actions[:top_n], 1):
-        # タプル形式の文字列からリスト形式に変換
-        action_str = action.strip('()').replace(' ', '')
-        action_list = [int(x) for x in action_str.split(',') if x]
-        
-        print(f"{i}. アクション: {action_list}, Q値: {q_value:.4f}")
-
-def print_initial_state_actions(q_table, top_n=20):
-    """初期状態に対するアクションを表示"""
-    print_top_actions_for_state(q_table, "initial", top_n)
-
-def find_states_with_pattern(q_table, pattern):
-    """指定したパターンを含む状態キーを検索"""
-    matching_states = []
-    
-    for state, _ in q_table.keys():
-        if pattern in state:
-            matching_states.append(state)
-    
-    # 重複を削除
-    unique_states = list(set(matching_states))
-    return unique_states
-
-def main():
-    parser = argparse.ArgumentParser(description='Q値テーブルビューア')
-    parser.add_argument('--model', type=str, default='models/multi_q_learning_model.pkl',
-                      help='表示するモデルのパス')
-    parser.add_argument('--opponent-model', type=str, 
-                      help='比較する対戦相手モデルのパス（指定した場合は両方表示）')
-    parser.add_argument('--state', type=str, default='initial',
-                      help='表示する状態キー（デフォルト: initial）')
-    parser.add_argument('--search', type=str,
-                      help='状態キーで検索するパターン')
-    parser.add_argument('--top-n', type=int, default=10,
-                      help='表示するトップNのアクション数')
-    
-    args = parser.parse_args()
-    
-    # メインモデルのロード
-    q_table, model_data = load_q_table(args.model)
+    """
+    Print statistics about the Q-table
+    """
     if q_table is None:
         return
     
-    print(f"\n===== モデル: {args.model} =====")
-    print(f"モデル情報:")
-    for key, value in model_data.items():
-        if key != 'q_table':
-            print(f"  {key}: {value}")
+    # Check if keys are in the format (state, action)
+    first_key = next(iter(q_table.keys()), None)
+    is_tuple_format = isinstance(first_key, tuple) and len(first_key) == 2
     
-    # Q値テーブルの統計情報を表示
+    if is_tuple_format:
+        # Old format: (state, action) -> q_value
+        states = set(state for state, _ in q_table.keys())
+        num_states = len(states)
+        q_values = list(q_table.values())
+    else:
+        # New format: state -> {action -> q_value}
+        num_states = len(q_table)
+        # Flatten the dictionary to get all Q-values
+        q_values = []
+        for actions in q_table.values():
+            if isinstance(actions, dict):
+                q_values.extend(actions.values())
+            else:
+                q_values.append(actions)
+    
+    print(f"\n===== Q値テーブル統計 =====")
+    print(f"状態-行動ペア数: {len(q_table)}")
+    print(f"ユニーク状態数: {num_states}")
+    
+    if q_values:
+        print(f"最大Q値: {max(q_values):.4f}")
+        print(f"最小Q値: {min(q_values):.4f}")
+        print(f"平均Q値: {sum(q_values) / len(q_values):.4f}")
+        
+        # Q-value distribution
+        print("\nQ値の分布:")
+        thresholds = [10.0, 5.0, 1.0, 0.5, 0.0, -0.5, -1.0, -5.0, -10.0]
+        counts = [0] * (len(thresholds) + 1)
+        
+        for q in q_values:
+            for i, t in enumerate(thresholds):
+                if q >= t:
+                    counts[i] += 1
+                    break
+            else:
+                counts[-1] += 1
+        
+        labels = [
+            "10.0以上",
+            "5.0-10.0",
+            "1.0-5.0",
+            "0.5-1.0",
+            "0.0-0.5",
+            "-0.5-0.0",
+            "-1.0--0.5",
+            "-5.0--1.0",
+            "-10.0--5.0",
+            "-10.0未満"
+        ]
+        
+        for i, (label, count) in enumerate(zip(labels, counts)):
+            percentage = (count / len(q_values)) * 100 if q_values else 0
+            print(f"  {label}: {count} ({percentage:.1f}%)")
+    else:
+        print("Q値テーブルに値が存在しません")
+
+def print_state_actions(q_table, state):
+    """
+    Print top actions for a specific state
+    """
+    if q_table is None:
+        return
+    
+    # Check if keys are in the format (state, action)
+    first_key = next(iter(q_table.keys()), None)
+    is_tuple_format = isinstance(first_key, tuple) and len(first_key) == 2
+    
+    if is_tuple_format:
+        # Old format: (state, action) -> q_value
+        actions = {}
+        for (s, a), q in q_table.items():
+            if s == state:
+                actions[a] = q
+    else:
+        # New format: state -> {action -> q_value}
+        actions = q_table.get(state, {})
+    
+    if not actions:
+        print(f"状態 '{state}' に対するアクションが見つかりません")
+        return
+    
+    sorted_actions = sorted(actions.items(), key=lambda x: x[1], reverse=True)
+    
+    print(f"\n===== 状態 '{state}' のトップ10アクション =====")
+    for i, (action, q_value) in enumerate(sorted_actions[:10], 1):
+        print(f"{i}. アクション: {action}, Q値: {q_value:.4f}")
+
+def find_states(q_table, pattern):
+    """
+    Find states matching a pattern
+    """
+    if q_table is None:
+        return
+    
+    # Check if keys are in the format (state, action)
+    first_key = next(iter(q_table.keys()), None)
+    is_tuple_format = isinstance(first_key, tuple) and len(first_key) == 2
+    
+    if is_tuple_format:
+        # Old format: (state, action) -> q_value
+        states = set(state for state, _ in q_table.keys())
+    else:
+        # New format: state -> {action -> q_value}
+        states = q_table.keys()
+    
+    matching_states = [state for state in states if pattern in str(state)]
+    
+    print(f"\n===== パターン '{pattern}' を含む状態 =====")
+    print(f"一致する状態数: {len(matching_states)}")
+    
+    if matching_states:
+        print("\n最初の10状態:")
+        for i, state in enumerate(matching_states[:10], 1):
+            print(f"{i}. {state}")
+        
+        if len(matching_states) > 10:
+            print(f"...他 {len(matching_states) - 10} 個の状態があります")
+        
+        # Print actions for the first state
+        if matching_states:
+            print_state_actions(q_table, matching_states[0])
+    else:
+        print("一致する状態が見つかりません")
+
+def find_highest_q_value_states(q_table, n=10):
+    """
+    Find states with the highest Q-values
+    """
+    if q_table is None:
+        return
+    
+    # Check if keys are in the format (state, action)
+    first_key = next(iter(q_table.keys()), None)
+    is_tuple_format = isinstance(first_key, tuple) and len(first_key) == 2
+    
+    state_max_q_values = {}
+    
+    if is_tuple_format:
+        # Old format: (state, action) -> q_value
+        for (state, action), q_value in q_table.items():
+            current_max = state_max_q_values.get(state, -float('inf'))
+            state_max_q_values[state] = max(current_max, q_value)
+    else:
+        # New format: state -> {action -> q_value}
+        for state, actions in q_table.items():
+            if isinstance(actions, dict) and actions:
+                state_max_q_values[state] = max(actions.values())
+            elif isinstance(actions, (int, float)):
+                state_max_q_values[state] = actions
+    
+    # Sort states by their max Q-value
+    sorted_states = sorted(state_max_q_values.items(), key=lambda x: x[1], reverse=True)
+    
+    print(f"\n===== 最も高いQ値を持つ上位{n}状態 =====")
+    for i, (state, max_q) in enumerate(sorted_states[:n], 1):
+        print(f"{i}. 状態: {state}, 最大Q値: {max_q:.4f}")
+        
+        # Show the best action for this state
+        if is_tuple_format:
+            # Find the action with this Q-value
+            best_actions = []
+            for (s, a), q in q_table.items():
+                if s == state and q == max_q:
+                    best_actions.append((a, q))
+            
+            if best_actions:
+                action, q = best_actions[0]
+                print(f"   最適アクション: {action}, Q値: {q:.4f}")
+        else:
+            # Find the action with this Q-value
+            actions = q_table.get(state, {})
+            if isinstance(actions, dict):
+                best_actions = [(a, q) for a, q in actions.items() if q == max_q]
+                
+                if best_actions:
+                    action, q = best_actions[0]
+                    print(f"   最適アクション: {action}, Q値: {q:.4f}")
+
+def print_model_info(model):
+    """
+    Print information about the model
+    """
+    print(f"\n===== モデル情報: =====")
+    
+    # Print attributes that most models should have
+    attrs_to_print = [
+        'digits', 'number_range', 'allow_repetition',
+        'learning_rate', 'discount_factor', 'exploration_rate',
+        'optimal_first_guesses', 'training_stats'
+    ]
+    
+    for attr in attrs_to_print:
+        if hasattr(model, attr):
+            value = getattr(model, attr)
+            print(f"  {attr}: {value}")
+
+def main():
+    parser = argparse.ArgumentParser(description='Q値テーブル解析ツール')
+    parser.add_argument('--model', required=True, help='モデルファイルのパス')
+    parser.add_argument('--state', help='アクションを表示する状態')
+    parser.add_argument('--search', help='指定したパターンに一致する状態を検索')
+    parser.add_argument('--list-states', action='store_true', help='最初の10状態を表示')
+    parser.add_argument('--highest', action='store_true', help='最も高いQ値を持つ状態を表示')
+    parser.add_argument('--show-structure', action='store_true', help='モデルの構造を詳細に表示')
+    
+    args = parser.parse_args()
+    
+    print(f"\n===== モデル: {args.model} =====")
+    model = load_model(args.model)
+    
+    if args.show_structure:
+        print_model_structure(model)
+    
+    q_table = load_q_table(model)
+    
+    if hasattr(model, 'digits'):
+        print(f"モデル情報:")
+        print_model_info(model)
+    
     print_q_table_stats(q_table)
     
-    # 初期状態のアクションを表示
-    if args.state == 'initial':
-        print_initial_state_actions(q_table, args.top_n)
-    else:
-        print_top_actions_for_state(q_table, args.state, args.top_n)
+    if q_table is None:
+        return
     
-    # パターン検索
+    # Check if keys are in the format (state, action)
+    first_key = next(iter(q_table.keys()), None)
+    is_tuple_format = isinstance(first_key, tuple) and len(first_key) == 2
+    
+    if args.state:
+        print_state_actions(q_table, args.state)
+    
     if args.search:
-        matching_states = find_states_with_pattern(q_table, args.search)
-        print(f"\n===== パターン '{args.search}' を含む状態 =====")
-        print(f"一致する状態数: {len(matching_states)}")
-        
-        if len(matching_states) > 0:
-            print("\n最初の10状態:")
-            for i, state in enumerate(matching_states[:10], 1):
-                print(f"{i}. {state}")
-            
-            if len(matching_states) > 10:
-                print(f"...他 {len(matching_states) - 10} 個の状態があります")
-            
-            # 最初の状態についてアクションを表示
-            if matching_states:
-                print_top_actions_for_state(q_table, matching_states[0], args.top_n)
+        find_states(q_table, args.search)
     
-    # 対戦相手モデルとの比較
-    if args.opponent_model:
-        opponent_q_table, opponent_model_data = load_q_table(args.opponent_model)
-        if opponent_q_table is not None:
-            print(f"\n===== 対戦相手モデル: {args.opponent_model} =====")
-            print_q_table_stats(opponent_q_table)
-            
-            # 初期状態の比較
-            print("\n===== 初期状態での両モデルの比較 =====")
-            
-            main_actions = {}
-            opponent_actions = {}
-            
-            for (state, action), q_value in q_table.items():
-                if state == "initial":
-                    main_actions[action] = q_value
-            
-            for (state, action), q_value in opponent_q_table.items():
-                if state == "initial":
-                    opponent_actions[action] = q_value
-            
-            # 共通するアクション
-            common_actions = set(main_actions.keys()) & set(opponent_actions.keys())
-            print(f"初期状態での共通アクション数: {len(common_actions)}")
-            
-            if common_actions:
-                print("\n共通する上位5アクション（Q値の差分順）:")
-                
-                # Q値の差が大きいものから表示
-                diff_actions = [(action, main_actions[action], opponent_actions[action], 
-                               abs(main_actions[action] - opponent_actions[action])) 
-                              for action in common_actions]
-                
-                sorted_diff = sorted(diff_actions, key=lambda x: x[3], reverse=True)
-                
-                for i, (action, main_q, opponent_q, diff) in enumerate(sorted_diff[:5], 1):
-                    action_str = action.strip('()').replace(' ', '')
-                    action_list = [int(x) for x in action_str.split(',') if x]
-                    
-                    print(f"{i}. アクション: {action_list}")
-                    print(f"   メインQ値: {main_q:.4f}, 対戦相手Q値: {opponent_q:.4f}, 差分: {diff:.4f}")
+    # Special case for the initial state
+    print_state_actions(q_table, 'initial')
+    
+    if args.list_states:
+        # List first 10 states
+        if is_tuple_format:
+            states = sorted(set(state for state, _ in q_table.keys()))
+        else:
+            states = sorted(q_table.keys())
+        
+        print("\n===== 最初の10状態 =====")
+        for i, state in enumerate(states[:10], 1):
+            print(f"{i}. {state}")
+        
+        if len(states) > 10:
+            print(f"...他 {len(states) - 10} 個の状態があります")
+    
+    if args.highest:
+        find_highest_q_value_states(q_table)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main() 
